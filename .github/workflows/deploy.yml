@@ -1,0 +1,74 @@
+name: Deploy to GitHub Pages
+
+# Builds the static export of the site and publishes it to GitHub Pages
+# on every push to `main` (or manually from the Actions tab).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, skip runs queued meanwhile
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Sites served from https://<user>.github.io/<repo>/ need a base path.
+      # If the repository IS <user>.github.io, the site is served from the
+      # root and no base path is required.
+      - name: Compute base path
+        id: bp
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          if [[ "$REPO_NAME" == *.github.io ]]; then
+            echo "path=" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=/$REPO_NAME" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Server-only route handlers (contact form API + SQLite) cannot run on
+      # static hosting. They are removed for the static build; the contact
+      # form automatically falls back to the configured form service or mailto.
+      - name: Remove server-only API routes
+        run: rm -rf src/app/api
+
+      - name: Build static site
+        env:
+          STATIC_EXPORT: "1"
+          NEXT_PUBLIC_STATIC_EXPORT: "1"
+          NEXT_PUBLIC_BASE_PATH: ${{ steps.bp.outputs.path }}
+        run: bun run build:static
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
